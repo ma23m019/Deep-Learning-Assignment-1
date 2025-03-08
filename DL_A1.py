@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 
 class FeedForwardNN:
-    def __init__(self, input_size, hidden_layers, output_size, weight_type='random', activation_function='relu'):
+    def __init__(self, input_size, hidden_layers, output_size, weight_type='random', activation_function='relu', optimizer='sgd', learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8, epochs = 10):
         """
         Initializes the Feedforward Neural Network.
 
@@ -50,6 +50,13 @@ class FeedForwardNN:
         self.output_size = output_size
         self.weight_type = weight_type
         self.activation_function = activation_function
+        self.optimizer = optimizer
+        self.learning_rate = learning_rate
+        self.beta1 = beta1  # Used for Momentum/Adam/Nadam
+        self.beta2 = beta2  # Used for RMSprop/Adam/Nadam
+        self.epsilon = epsilon  # Smoothing term to avoid division by zero
+        self.epochs = epochs
+                
         self.weights = self.initialize_weights()
         self.biases = self.initialize_biases()
     
@@ -76,7 +83,18 @@ class FeedForwardNN:
         """        
         biases = [np.zeros((1, size)) for size in self.hidden_layers + [self.output_size]]
         return biases
-    
+
+    def initialize_optimizer_params(self):
+        self.velocities_w = [np.zeros_like(w) for w in self.weights]
+        self.velocities_b = [np.zeros_like(b) for b in self.biases]
+        self.squared_grads_w = [np.zeros_like(w) for w in self.weights]
+        self.squared_grads_b = [np.zeros_like(b) for b in self.biases]
+        self.m_w = [np.zeros_like(w) for w in self.weights]
+        self.m_b = [np.zeros_like(b) for b in self.biases]
+        self.v_w = [np.zeros_like(w) for w in self.weights]
+        self.v_b = [np.zeros_like(b) for b in self.biases]
+        self.t = 0  # Time step for Adam and Nadam
+        
     def activation(self, x):
         """
         Applies the selected activation function to the input.
@@ -91,8 +109,6 @@ class FeedForwardNN:
             return np.tanh(x)
         elif self.activation_function == 'sigmoid':
             return 1 / (1 + np.exp(-x))
-        else:
-            raise ValueError("Unsupported activation function")
     
     def activation_derivative(self, x):
         """
@@ -105,8 +121,6 @@ class FeedForwardNN:
         elif self.activation_function == 'sigmoid':
             sig = 1 / (1 + np.exp(-x))
             return sig * (1 - sig)
-        else:
-            raise ValueError("Unsupported activation function")
     
     def softmax(self, x):
         """
@@ -153,31 +167,46 @@ class FeedForwardNN:
         y_true_classes = np.argmax(y_true, axis=1)  # Convert one-hot encoded labels to class labels
         accuracy = np.mean(y_pred_classes == y_true_classes)  # Compute accuracy
         return accuracy
-    
-    def backward(self, X, y_true, learning_rate):
+
+    def update_weights(self, dW, dB, layer_idx):
+        if self.optimizer == 'sgd':
+            self.weights[layer_idx] -= self.learning_rate * dW
+            self.biases[layer_idx] -= self.learning_rate * dB
+        elif self.optimizer == 'momentum':
+            self.velocities_w[layer_idx] = self.beta1 * self.velocities_w[layer_idx] + (1 - self.beta1) * dW
+            self.velocities_b[layer_idx] = self.beta1 * self.velocities_b[layer_idx] + (1 - self.beta1) * dB
+            self.weights[layer_idx] -= self.learning_rate * self.velocities_w[layer_idx]
+            self.biases[layer_idx] -= self.learning_rate * self.velocities_b[layer_idx]
+        elif self.optimizer == 'rmsprop':
+            self.squared_grads_w[layer_idx] = self.beta2 * self.squared_grads_w[layer_idx] + (1 - self.beta2) * (dW ** 2)
+            self.squared_grads_b[layer_idx] = self.beta2 * self.squared_grads_b[layer_idx] + (1 - self.beta2) * (dB ** 2)
+            self.weights[layer_idx] -= self.learning_rate * dW / (np.sqrt(self.squared_grads_w[layer_idx]) + self.epsilon)
+            self.biases[layer_idx] -= self.learning_rate * dB / (np.sqrt(self.squared_grads_b[layer_idx]) + self.epsilon)
+        elif self.optimizer == 'adam':
+            self.t += 1
+            self.m_w[layer_idx] = self.beta1 * self.m_w[layer_idx] + (1 - self.beta1) * dW
+            self.v_w[layer_idx] = self.beta2 * self.v_w[layer_idx] + (1 - self.beta2) * (dW ** 2)
+            m_hat_w = self.m_w[layer_idx] / (1 - self.beta1 ** self.t)
+            v_hat_w = self.v_w[layer_idx] / (1 - self.beta2 ** self.t)
+            self.weights[layer_idx] -= self.learning_rate * m_hat_w / (np.sqrt(v_hat_w) + self.epsilon)
+        
+    def backward(self, X, y_true):
         """
         Performs backpropagation to update weights and biases using gradient descent.
         Gradients are computed for each layer and weights are adjusted accordingly.
         """    
         m = X.shape[0]
         dZ = self.activations[-1] - y_true  # Compute gradient for output layer
-        dW = np.dot(self.activations[-2].T, dZ) / m
-        dB = np.sum(dZ, axis=0, keepdims=True) / m
-        
-        self.weights[-1] -= learning_rate * dW  # Update weights for output layer
-        self.biases[-1] -= learning_rate * dB
-
-        # Backpropagate through hidden layers
-        for i in range(len(self.weights) - 2, -1, -1):
-            dA = np.dot(dZ, self.weights[i + 1].T)  # Compute gradient for activation
-            dZ = dA * self.activation_derivative(self.z_values[i])  # Apply activation derivative
-            dW = np.dot(self.activations[i - 1].T, dZ) / m if i > 0 else np.dot(X.T, dZ) / m
-            dB = np.sum(dZ, axis=0, keepdims=True) / m
             
-            self.weights[i] -= learning_rate * dW  # Update weights
-            self.biases[i] -= learning_rate * dB  # Update biases
+        for i in range(len(self.weights) - 1, -1, -1):
+            dW = np.dot(self.activations[i-1].T, dZ) / m if i > 0 else np.dot(X.T, dZ) / m
+            dB = np.sum(dZ, axis=0, keepdims=True) / m
+            self.update_weights(dW, dB, i)
+            if i > 0:
+                dA = np.dot(dZ, self.weights[i].T)
+                dZ = dA * self.activation_derivative(self.z_values[i-1])
     
-    def train(self, X, y, epochs=100, learning_rate=0.01):
+    def train(self, X, y):
         """
         Trains the neural network using gradient descent.
         Logs the loss and accuracy at regular intervals.
@@ -185,7 +214,7 @@ class FeedForwardNN:
         for epoch in range(epochs):
             y_pred = self.forward(X)  # Forward pass
             loss = self.compute_loss(y, y_pred)  # Compute loss
-            self.backward(X, y, learning_rate)  # Backward pass
+            self.backward(X, y)  # Backward pass
             accuracy = self.compute_accuracy(X, y)  # Compute accuracy
                         
             if epoch % 10 == 0:  # Print progress every 10 epochs
