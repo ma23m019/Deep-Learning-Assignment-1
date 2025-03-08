@@ -32,7 +32,8 @@ import numpy as np
 import pandas as pd
 
 class FeedForwardNN:
-    def __init__(self, input_size, hidden_layers, output_size, weight_type='random', activation_function='relu', optimizer='sgd', learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8, epochs = 10):
+    def __init__(self, input_size, hidden_layers, output_size, weight_type='random', activation_function='relu', optimizer='sgd', 
+                 learning_rate=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8, epochs = 10, batch_size=None):
         """
         Initializes the Feedforward Neural Network.
 
@@ -65,6 +66,7 @@ class FeedForwardNN:
         self.beta2 = beta2
         self.epsilon = epsilon
         self.epochs = epochs
+        self.batch_size = batch_size
                 
         self.weights = self.initialize_weights()
         self.biases = self.initialize_biases()
@@ -289,11 +291,29 @@ class FeedForwardNN:
         Trains the neural network using gradient descent.
         Logs the loss and accuracy at regular intervals.
         """      
+        m = X.shape[0]
+        
+        # If batch_size is not set, use full dataset size
+        if self.batch_size is None:
+            self.batch_size = m  # Full-batch training
+    
         for epoch in range(epochs):
-            y_pred = self.forward(X)  # Forward pass
-            loss = self.compute_loss(y, y_pred)  # Compute loss
-            self.backward(X, y)  # Backward pass
-            accuracy = self.compute_accuracy(X, y)  # Compute accuracy
-                        
-            if epoch % 10 == 0:  # Print progress every 10 epochs
-                print(f"Epoch {epoch}: Loss {loss:.4f}, Accuracy {accuracy:.4f}")
+            # Shuffle data at the start of each epoch
+            indices = np.arange(m)
+            np.random.shuffle(indices)
+            X_shuffled, y_shuffled = X[indices], y[indices]
+            
+            for i in range(0, m, self.batch_size):  # Use self.batch_size
+                X_batch = X_shuffled[i:i + self.batch_size]
+                y_batch = y_shuffled[i:i + self.batch_size]
+    
+                y_pred = self.forward(X_batch)  # Forward pass
+                self.backward(X_batch, y_batch)  # Backpropagation
+    
+            # Compute loss and accuracy on full dataset
+            y_pred_full = self.forward(X)
+            loss = self.compute_loss(y, y_pred_full)
+            accuracy = self.compute_accuracy(X, y)
+    
+            if epoch % 10 == 0:
+                print(f"Epoch {epoch+1}: Loss {loss:.4f}, Accuracy {accuracy:.4f}")
