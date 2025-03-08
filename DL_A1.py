@@ -42,8 +42,17 @@ class FeedForwardNN:
         - output_size: Number of output neurons (e.g. number of classes for classification).
         - weight_type: Type of weight initialization ('random' or 'Xavier').
         - activation_function: Activation function to use ('relu', 'tanh', 'sigmoid').
+        - optimizer: Optimization algorithm for updating weights ('sgd', 'momentum', 'nesterov', 'rmsprop', 'adam', 'nadam')
+        - learning_rate: Learning rate for weight updates (default: 0.01).
+        - beta1: Momentum decay factor for Adam and Momentum optimizers (default: 0.9).
+        - beta2: Squared gradient decay factor for RMSprop and Adam optimizers (default: 0.999).
+        - epsilon: Small value to prevent division by zero in optimizers (default: 1e-8).
+        - epochs: Number of training iterations (default: 10).
 
-        The weights and biases are initialized using the specified method.
+        Initializes:
+        - Weights using the specified initialization method.
+        - Biases as zero vectors for each layer.
+        - Optimizer parameters (if applicable).
         """        
         self.input_size = input_size
         self.hidden_layers = hidden_layers
@@ -52,9 +61,9 @@ class FeedForwardNN:
         self.activation_function = activation_function
         self.optimizer = optimizer
         self.learning_rate = learning_rate
-        self.beta1 = beta1  # Used for Momentum/Adam/Nadam
-        self.beta2 = beta2  # Used for RMSprop/Adam/Nadam
-        self.epsilon = epsilon  # Smoothing term to avoid division by zero
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
         self.epochs = epochs
                 
         self.weights = self.initialize_weights()
@@ -85,8 +94,24 @@ class FeedForwardNN:
         return biases
 
     def initialize_optimizer_params(self):
-        self.velocities_w = [np.zeros_like(w) for w in self.weights]
-        self.velocities_b = [np.zeros_like(b) for b in self.biases]
+        """
+        Initializes optimization-related parameters for various optimizers.
+        
+        Initializes:
+        - u_w: History terms for weight updates (used in Momentum and Nestrerov).
+        - u_b: History terms for bias updates.
+        - squared_grads_w: Squared gradients for weight updates (used in RMSprop, Adam and Nadam).
+        - squared_grads_b: Squared gradients for bias updates.
+        - m_w: First moment estimates for weights (used in Adam and Nadam).
+        - m_b: First moment estimates for biases.
+        - v_w: Second moment estimates for weights (used in Adam and Nadam).
+        - v_b: Second moment estimates for biases.
+        - t: Time step counter for Adam and Nadam optimizers.
+    
+        This method is called before training to ensure that all necessary optimizer parameters are initialized to zero.
+        """
+        self.u_w = [np.zeros_like(w) for w in self.weights]
+        self.u_b = [np.zeros_like(b) for b in self.biases]
         self.squared_grads_w = [np.zeros_like(w) for w in self.weights]
         self.squared_grads_b = [np.zeros_like(b) for b in self.biases]
         self.m_w = [np.zeros_like(w) for w in self.weights]
@@ -169,26 +194,79 @@ class FeedForwardNN:
         return accuracy
 
     def update_weights(self, dW, dB, layer_idx):
+        """
+        Updates the weights and biases of a specific layer using the chosen optimization algorithm.
+    
+        Parameters:
+        - dW: Gradient of the loss with respect to the weights of the layer.
+        - dB: Gradient of the loss with respect to the biases of the layer.
+        - layer_idx: Index of the layer being updated.
+    
+        This method updates the model's weights and biases for the given layer using the selected optimizer.
+        """
+        
         if self.optimizer == 'sgd':
             self.weights[layer_idx] -= self.learning_rate * dW
             self.biases[layer_idx] -= self.learning_rate * dB
+        
         elif self.optimizer == 'momentum':
-            self.velocities_w[layer_idx] = self.beta1 * self.velocities_w[layer_idx] + (1 - self.beta1) * dW
-            self.velocities_b[layer_idx] = self.beta1 * self.velocities_b[layer_idx] + (1 - self.beta1) * dB
-            self.weights[layer_idx] -= self.learning_rate * self.velocities_w[layer_idx]
-            self.biases[layer_idx] -= self.learning_rate * self.velocities_b[layer_idx]
+            self.u_w[layer_idx] = self.beta1 * self.u_w[layer_idx] + dW
+            self.u_b[layer_idx] = self.beta1 * self.u_b[layer_idx] + dB
+            self.weights[layer_idx] -= self.learning_rate * self.u_w[layer_idx]
+            self.biases[layer_idx] -= self.learning_rate * self.u_b[layer_idx]       
+        
+        elif self.optimizer == 'nesterov':
+            # Lookahead step: Temporarily shift weights
+            lookahead_weights = self.weights[layer_idx] - self.beta1 * self.u_w[layer_idx]
+            lookahead_biases = self.biases[layer_idx] - self.beta1 * self.u_b[layer_idx]
+    
+            # Compute new velocity with gradients at lookahead position
+            self.u_w[layer_idx] = self.beta1 * self.u_w[layer_idx] + (1 - self.beta1) * dW
+            self.u_b[layer_idx] = self.beta1 * self.u_b[layer_idx] + (1 - self.beta1) * dB
+    
+            # Apply updated history
+            self.weights[layer_idx] = lookahead_weights - self.learning_rate * self.u_w[layer_idx]
+            self.biases[layer_idx] = lookahead_biases - self.learning_rate * self.u_b[layer_idx]
+            
         elif self.optimizer == 'rmsprop':
             self.squared_grads_w[layer_idx] = self.beta2 * self.squared_grads_w[layer_idx] + (1 - self.beta2) * (dW ** 2)
             self.squared_grads_b[layer_idx] = self.beta2 * self.squared_grads_b[layer_idx] + (1 - self.beta2) * (dB ** 2)
             self.weights[layer_idx] -= self.learning_rate * dW / (np.sqrt(self.squared_grads_w[layer_idx]) + self.epsilon)
             self.biases[layer_idx] -= self.learning_rate * dB / (np.sqrt(self.squared_grads_b[layer_idx]) + self.epsilon)
+        
         elif self.optimizer == 'adam':
             self.t += 1
             self.m_w[layer_idx] = self.beta1 * self.m_w[layer_idx] + (1 - self.beta1) * dW
+            self.m_b[layer_idx] = self.beta1 * self.m_b[layer_idx] + (1 - self.beta1) * dB
             self.v_w[layer_idx] = self.beta2 * self.v_w[layer_idx] + (1 - self.beta2) * (dW ** 2)
+            self.v_b[layer_idx] = self.beta2 * self.v_b[layer_idx] + (1 - self.beta2) * (dB ** 2)
+            
             m_hat_w = self.m_w[layer_idx] / (1 - self.beta1 ** self.t)
+            m_hat_b = self.m_b[layer_idx] / (1 - self.beta1 ** self.t)
             v_hat_w = self.v_w[layer_idx] / (1 - self.beta2 ** self.t)
+            v_hat_b = self.v_b[layer_idx] / (1 - self.beta2 ** self.t)
+            
             self.weights[layer_idx] -= self.learning_rate * m_hat_w / (np.sqrt(v_hat_w) + self.epsilon)
+            self.biases[layer_idx] -= self.learning_rate * m_hat_b / (np.sqrt(v_hat_b) + self.epsilon)
+        
+        elif self.optimizer == 'nadam':
+            self.t += 1
+            self.m_w[layer_idx] = self.beta1 * self.m_w[layer_idx] + (1 - self.beta1) * dW
+            self.m_b[layer_idx] = self.beta1 * self.m_b[layer_idx] + (1 - self.beta1) * dB
+            self.v_w[layer_idx] = self.beta2 * self.v_w[layer_idx] + (1 - self.beta2) * (dW ** 2)
+            self.v_b[layer_idx] = self.beta2 * self.v_b[layer_idx] + (1 - self.beta2) * (dB ** 2)
+            
+            m_hat_w = self.m_w[layer_idx] / (1 - self.beta1 ** self.t)
+            m_hat_b = self.m_b[layer_idx] / (1 - self.beta1 ** self.t)
+            v_hat_w = self.v_w[layer_idx] / (1 - self.beta2 ** self.t)
+            v_hat_b = self.v_b[layer_idx] / (1 - self.beta2 ** self.t)
+        
+            nadam_m_w = (self.beta1 * m_hat_w) + ((1 - self.beta1) * dW) / (1 - self.beta1 ** self.t)
+            nadam_m_b = (self.beta1 * m_hat_b) + ((1 - self.beta1) * dB) / (1 - self.beta1 ** self.t)
+        
+            self.weights[layer_idx] -= self.learning_rate * nadam_m_w / (np.sqrt(v_hat_w) + self.epsilon)
+            self.biases[layer_idx] -= self.learning_rate * nadam_m_b / (np.sqrt(v_hat_b) + self.epsilon)
+
         
     def backward(self, X, y_true):
         """
