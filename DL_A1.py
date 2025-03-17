@@ -26,7 +26,7 @@ for i in range(10):
 plt.tight_layout()
 plt.show()
 
-######################################################## QUESTION 2 ######################################################## 
+######################################################## QUESTION 2, QUESTION 3 ######################################################## 
 
 import numpy as np
 import pandas as pd
@@ -286,34 +286,209 @@ class FeedForwardNN:
                 dA = np.dot(dZ, self.weights[i].T)
                 dZ = dA * self.activation_derivative(self.z_values[i-1])
     
-    def train(self, X, y):
+
+    def train(self, X, y, X_val, y_val):
         """
-        Trains the neural network using gradient descent.
-        Logs the loss and accuracy at regular intervals.
-        """      
+        Trains the neural network.
+        Logs the loss and accuracy at each epoch.
+        """
         m = X.shape[0]
-        
+
         # If batch_size is not set, use full dataset size
         if self.batch_size is None:
             self.batch_size = m  # Full-batch training
-    
-        for epoch in range(epochs):
+
+        for epoch in range(self.epochs):
             # Shuffle data at the start of each epoch
             indices = np.arange(m)
             np.random.shuffle(indices)
             X_shuffled, y_shuffled = X[indices], y[indices]
-            
+
             for i in range(0, m, self.batch_size):  # Use self.batch_size
                 X_batch = X_shuffled[i:i + self.batch_size]
                 y_batch = y_shuffled[i:i + self.batch_size]
-    
+
                 y_pred = self.forward(X_batch)  # Forward pass
                 self.backward(X_batch, y_batch)  # Backpropagation
-    
-            # Compute loss and accuracy on full dataset
+
+            # Compute training loss and accuracy on full dataset
             y_pred_full = self.forward(X)
             loss = self.compute_loss(y, y_pred_full)
             accuracy = self.compute_accuracy(X, y)
-    
-            if epoch % 10 == 0:
-                print(f"Epoch {epoch+1}: Loss {loss:.4f}, Accuracy {accuracy:.4f}")
+            wandb.log({"train_accuracy": accuracy})
+            wandb.log({"train_loss": loss})
+
+            # Compute loss and accuracy on validation dataset
+            y_pred = self.forward(X_val)
+            val_loss = self.compute_loss(y_val, y_pred)
+            val_accuracy = self.compute_accuracy(X_val, y_val)
+            wandb.log({"val_accuracy": val_accuracy})
+            wandb.log({"val_loss": val_loss})
+
+
+######################################################## QUESTION 4 ######################################################## 
+import numpy as np
+import wandb
+from sklearn.model_selection import train_test_split
+from keras.datasets import fashion_mnist
+
+# Load Fashion MNIST dataset
+(X_train, y_train), (X_test, y_test) = fashion_mnist.load_data()
+X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
+
+# Normalize images
+X_train = X_train.reshape(X_train.shape[0], -1) / 255.0
+X_test = X_test.reshape(X_test.shape[0], -1) / 255.0
+X_val = X_val.reshape(X_val.shape[0], -1) / 255.0
+
+# One-hot encoding labels
+y_train = np.eye(10)[y_train]
+y_val = np.eye(10)[y_val]
+y_test = np.eye(10)[y_test]
+
+# Define the hyperparameter sweep configuration
+sweep_config = {
+    'method': 'random',  # Random search for broad exploration  (or 'Bayesian')
+    'metric': {'name': 'val_accuracy', 'goal': 'maximize'},
+    'parameters': {
+        'epochs': {'values': [5, 10]},
+        'hidden_layers': {'values': [3, 4, 5]},
+        'layer_size': {'values': [32, 64, 128]},
+        'l2_lambda': {'values': [0, 0.0005, 0.5]},
+        'learning_rate': {'values': [1e-3, 1e-4]},
+        'optimizer': {'values': ['sgd', 'momentum', 'nesterov', 'rmsprop', 'adam', 'nadam']},
+        'batch_size': {'values': [16, 32, 64]},
+        'weight_type': {'values': ['random', 'Xavier']},
+        'activation': {'values': ['sigmoid', 'tanh', 'relu']}
+    }
+}
+
+# Initialize sweep
+sweep_id = wandb.sweep(sweep_config, project="Deep learning Assignment 1")
+
+def sweep_train():
+    # Initialize wandb run
+    wandb.init(project="Deep learning Assignment 1", reinit=True)
+    config = wandb.config
+
+    # Initialize the network
+    model = FeedForwardNN(
+            input_size = 784,  # Flattened image size
+            hidden_layers = [config.layer_size] * config.hidden_layers,
+            output_size = 10,
+            weight_type = config.weight_type,
+            activation_function = config.activation,
+            optimizer = config.optimizer,
+            learning_rate = config.learning_rate,
+            epochs = config.epochs,
+            batch_size = config.batch_size,
+            l2_lambda = config.l2_lambda
+        )
+
+    # Train the network
+    model.initialize_optimizer_params()
+
+    # Train model
+    model.train(X_train, y_train, X_val, y_val)
+
+    wandb.finish()
+
+# Run the sweep
+wandb.agent(sweep_id, sweep_train, count=20)  # Running 20 trials
+
+
+######################################################## QUESTION 7 ######################################################## 
+
+from sklearn.model_selection import train_test_split
+from keras.datasets import fashion_mnist
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+
+# Load Fashion MNIST dataset
+(X_train, y_train), (X_test, y_test) = fashion_mnist.load_data()
+X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, random_state=42)
+
+# Normalize images
+X_train = X_train.reshape(X_train.shape[0], -1) / 255.0
+X_test = X_test.reshape(X_test.shape[0], -1) / 255.0
+X_val = X_val.reshape(X_val.shape[0], -1) / 255.0
+
+# One-hot encoding labels
+y_train = np.eye(10)[y_train]
+y_val = np.eye(10)[y_val]
+y_test = np.eye(10)[y_test]
+
+model = FeedForwardNN(input_size = 784, hidden_layers = [128] * 4, output_size = 10, weight_type = 'Xavier',
+                      activation_function = "relu", optimizer = "adam", learning_rate = 0.0001, epochs = 10, batch_size = 160, l2_lambda = 0)
+
+# Train the network
+model.initialize_optimizer_params()
+
+# Train model
+model.train(X_train, y_train, X_val, y_val)
+
+def plot_confusion_matrix(model, X_test, y_test, class_names):
+    # Get predictions
+    y_pred_probs = model.forward(X_test)
+    y_pred = np.argmax(y_pred_probs, axis=1)
+    y_true = np.argmax(y_test, axis=1)
+
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    # Plot confusion matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel("Predicted Label")
+    plt.ylabel("True Label")
+    plt.title("Confusion Matrix")
+    plt.show()
+
+# compute test accuracy
+print(model.compute_accuracy(X_test, y_test))
+
+# plot the confusion matrix
+class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+plot_confusion_matrix(model, X_test, y_test, class_names)
+
+
+######################################################## QUESTION 10 ######################################################## 
+
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.datasets import mnist
+
+# Load MNIST dataset
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+
+X_train = x_train.reshape(x_train.shape[0], -1) / 255.0
+X_test = x_test.reshape(x_test.shape[0], -1) / 255.0
+
+# One-hot encoding labels
+y_train = np.eye(10)[y_train]
+y_test = np.eye(10)[y_test]
+
+# CONFIG 1
+model_1 = FeedForwardNN(input_size = 784, hidden_layers = [128] * 4, output_size = 10, weight_type = 'Xavier',
+                      activation_function = "relu", optimizer = "adam", learning_rate = 0.0001, epochs = 10, batch_size = 160, l2_lambda = 0)
+
+model_1.initialize_optimizer_params()
+model_1.train(X_train, y_train, X_test, y_test)
+
+print(model_1.compute_accuracy(X_test, y_test))
+
+# CONFIG 2
+model_2 = FeedForwardNN(input_size = 784, hidden_layers = [64] * 4, output_size = 10, weight_type = 'Xavier',
+                      activation_function = "relu", optimizer = "nadam", learning_rate = 0.001, epochs = 10, batch_size = 32, l2_lambda = 0)
+model_2.initialize_optimizer_params()
+model_2.train(X_train, y_train, X_test, y_test)
+print(model_2.compute_accuracy(X_test, y_test))
+
+# CONFIG 3
+model_3 = FeedForwardNN(input_size = 784, hidden_layers = [128] * 5, output_size = 10, weight_type = 'Xavier',
+                      activation_function = "relu", optimizer = "nadam", learning_rate = 0.0001, epochs = 10, batch_size = 320, l2_lambda = 0)
+model_3.initialize_optimizer_params()
+model_3.train(X_train, y_train, X_test, y_test)
+print(model_3.compute_accuracy(X_test, y_test))
