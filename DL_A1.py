@@ -1,9 +1,13 @@
 ######################################################## QUESTION 1 ######################################################## 
 import numpy as np
+import wandb
 import matplotlib.pyplot as plt
 from keras.datasets import fashion_mnist
 
-# Load the dataset
+# Initialize WandB
+wandb.init(project="Deep learning Assignment 1", name="Q1")
+
+# Load the Fashion-MNIST dataset
 (x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
 
 # Define class labels
@@ -24,7 +28,16 @@ for i in range(10):
     axes[i].axis('off')
 
 plt.tight_layout()
+
+# Log the figure to WandB
+wandb.log({"Fashion-MNIST Samples": wandb.Image(fig)})
+
+# Show the plot in Colab
 plt.show()
+
+# Finish the WandB run
+wandb.finish()
+
 
 ######################################################## QUESTION 2, QUESTION 3 ######################################################## 
 
